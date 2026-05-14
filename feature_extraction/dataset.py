@@ -8,7 +8,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 def extract_features(scenario):
-    """Extracts X, Y, and 1 second magntiude displacement for vehicles"""
+    """Extracts magntiude displacement and other features for vehicles"""
     features = []
     
     # identify bike lane coordinates for labeling
@@ -16,12 +16,6 @@ def extract_features(scenario):
     for feature in scenario.map_features:
         if feature.HasField('lane') and feature.lane.type == 3: # bike
             bike_lanes.extend((p.x, p.y) for p in feature.lane.polyline)
-
-    # bounding box to check for bike lane
-    def in_bike_lane(x, y):
-        if not bike_lanes: return 0
-        distances = [np.sqrt((x - bx)**2 + (y - by)**2) for bx, by in bike_lanes]
-        return 1 if min(distances) < 2.0 else 0 # 2 meters threshold
 
     # Iterates through tracks
     for track_id, track in enumerate(scenario.tracks):
@@ -36,13 +30,22 @@ def extract_features(scenario):
                 dx = future_state.center_x - current_state.center_x
                 dy = future_state.center_y - current_state.center_y
                 magnitude = np.sqrt(dx**2 + dy**2)
+
+                if bike_lanes:
+                    distances = [np.sqrt((current_state.center_x - bx)**2 + (current_state.center_y - by)**2) 
+                                for bx, by in bike_lanes]
+                    dist = min(distances)
+                else:
+                    dist = 999.0 # if no bike lanes, set to a large number
+                
                 features.append({
                     'track_id': f"{scenario.scenario_id}+{track_id}", # unique ID for grouping
-                    'x': current_state.center_x,
-                    'y': current_state.center_y,
+                    # 'x': current_state.center_x,
+                    # 'y': current_state.center_y,
                     'displacement': magnitude,
-                    'is_bike_lane': in_bike_lane(current_state.center_x, current_state.center_y)
-                    })
+                    'dist_to_bike_lane': dist,
+                    'is_bike_lane': 1 if dist < 2.0 else 0
+                })
     return pd.DataFrame(features)
 
 def create_splits(df):
@@ -55,7 +58,7 @@ def create_splits(df):
 
     # 2nd split: 20% val, 20% test
     gss_temp = GroupShuffleSplit(n_splits=1, train_size=0.5, random_state=42)
-    val_idx, test_idx = next(gss.split(temp_df, groups=temp_df['track_id']))
+    val_idx, test_idx = next(gss_temp.split(temp_df, groups=temp_df['track_id']))
     val_df = temp_df.iloc[val_idx]
     test_df = temp_df.iloc[test_idx]
     return train_df, val_df, test_df
